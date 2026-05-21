@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #111111;
+  --bg-tertiary: #1a1a1a;
+  --border-color: #2a2020;
+  --text-color: #f0e8e8;
+  --muted-color: #8a7070;
+  --accent-color: #b82020;
+}
+
+body.light {
+  --bg-primary: #eeebe6;
+  --bg-secondary: #f8f5f0;
+  --bg-tertiary: #e4e0d8;
+  --border-color: #d0c8bc;
+  --text-color: #1a1410;
+  --muted-color: #6e6258;
+  --accent-color: #b82020;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-color);
+  font-family: 'Syne', sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 2px; }
+
+.prose-dark h1, .prose-dark h2, .prose-dark h3 {
+  color: var(--text-color);
+  font-weight: 500;
+  margin: 0.75rem 0 0.4rem;
+}
+.prose-dark p { margin: 0.4rem 0; line-height: 1.7; }
+.prose-dark ul, .prose-dark ol { padding-left: 1.25rem; margin: 0.4rem 0; }
+.prose-dark li { margin: 0.2rem 0; }
+.prose-dark code {
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+}
+.prose-dark pre {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.prose-dark pre code { background: none; padding: 0; }
+.prose-dark strong { color: var(--text-color); font-weight: 500; }
+.prose-dark a { color: #b82020; text-decoration: underline; }
+
+.bg-bg-primary   { background-color: var(--bg-primary) !important; }
+.bg-bg-secondary { background-color: var(--bg-secondary) !important; }
+.bg-bg-tertiary  { background-color: var(--bg-tertiary) !important; }
+.text-muted      { color: var(--muted-color) !important; }
+.border-border   { border-color: var(--border-color) !important; }
+
+/* Dark mode red hover (default) */
+.hover-red:hover {
+  color: #f87171 !important;
+  background-color: rgb(248 113 113 / 0.05) !important;
+}
+
+/* Light mode — stronger red */
+body.light .hover-red:hover {
+  color: #dc2626 !important;
+  background-color: rgb(220 38 38 / 0.1) !important;
+}
+
+.hover\:bg-bg-tertiary:hover {
+  background-color: var(--bg-tertiary) !important;
+}
+
+/* Accent overrides — warm red */
+.bg-accent-purple { background-color: #b82020 !important; }
+.text-accent-purple { color: #b82020 !important; }
+.border-accent-purple\/30 { border-color: rgb(184 32 32 / 0.3) !important; }
+.border-accent-purple\/40 { border-color: rgb(184 32 32 / 0.4) !important; }
+.border-accent-purple\/50 { border-color: rgb(184 32 32 / 0.5) !important; }
+.bg-accent-purple\/5  { background-color: rgb(184 32 32 / 0.05) !important; }
+.bg-accent-purple\/10 { background-color: rgb(184 32 32 / 0.1) !important; }
+.hover\:text-accent-purple:hover { color: #b82020 !important; }
+.hover\:border-accent-purple\/40:hover { border-color: rgb(184 32 32 / 0.4) !important; }
+.hover\:bg-accent-purple\/5:hover { background-color: rgb(184 32 32 / 0.05) !important; }
+.hover\:border-accent-purple\/50:hover { border-color: rgb(184 32 32 / 0.5) !important; }
