@@ -7,12 +7,6 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Script to inject backend URL at runtime
-RUN echo '#!/bin/sh' > /docker-entrypoint.d/inject-env.sh && \
-    echo 'sed -i "s|BACKEND_URL_PLACEHOLDER|$API_URL|g" /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.d/inject-env.sh && \
-    chmod +x /docker-entrypoint.d/inject-env.sh
-
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
