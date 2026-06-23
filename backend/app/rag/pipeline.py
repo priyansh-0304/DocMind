@@ -1,56 +1,39 @@
 import fitz
-import requests
-import numpy as np
+from fastembed import TextEmbedding
 from app.db import get_db_connection
 from app.config import settings
 from groq import Groq
 
-HF_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
+_model = None
 
+def get_model():
+    global _model
+    if _model is None:
+        _model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+    return _model
 
 def get_embeddings(texts: list[str]) -> list[list[float]]:
-    headers = {"Authorization": f"Bearer {settings.hf_token}"}
-    response = requests.post(
-        HF_API_URL,
-        headers=headers,
-        json={"inputs": texts},
-        timeout=30,
-    )
-    response.raise_for_status()
-    result = response.json()
-    # HF returns list of embeddings directly
-    return result
-
+    model = get_model()
+    return [emb.tolist() for emb in model.embed(texts)]
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = []
-    for page in doc:
-        pages.append(page.get_text())
-    return "\n\n".join(pages)
-
+    return "\n\n".join(page.get_text() for page in doc)
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
     words = text.split()
     chunks = []
     step = chunk_size - overlap
     for i in range(0, len(words), step):
-        chunk = " ".join(words[i : i + chunk_size])
+        chunk = " ".join(words[i:i + chunk_size])
         if chunk.strip():
             chunks.append(chunk)
         if i + chunk_size >= len(words):
             break
     return chunks
 
-
 def embed_and_store(doc_id: int, chunks: list[str]) -> int:
-    # Process in batches of 32
-    embeddings = []
-    for i in range(0, len(chunks), 32):
-        batch = chunks[i:i+32]
-        batch_embeddings = get_embeddings(batch)
-        embeddings.extend(batch_embeddings)
-
+    embeddings = get_embeddings(chunks)
     conn = get_db_connection()
     cur = conn.cursor()
     for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
@@ -64,10 +47,8 @@ def embed_and_store(doc_id: int, chunks: list[str]) -> int:
     conn.close()
     return len(chunks)
 
-
 def retrieve_chunks(query: str, doc_id: int, k: int = 4) -> list[dict]:
     query_embedding = get_embeddings([query])[0]
-
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -83,10 +64,8 @@ def retrieve_chunks(query: str, doc_id: int, k: int = 4) -> list[dict]:
     conn.close()
     return [{"text": r["text"], "similarity_score": round(float(r["similarity_score"]), 2)} for r in rows]
 
-
 def retrieve_chunks_multi(query: str, doc_ids: list[int], k: int = 6) -> list[dict]:
     query_embedding = get_embeddings([query])[0]
-
     conn = get_db_connection()
     cur = conn.cursor()
     placeholders = ','.join(['%s'] * len(doc_ids))
@@ -104,10 +83,8 @@ def retrieve_chunks_multi(query: str, doc_ids: list[int], k: int = 6) -> list[di
     conn.close()
     return [{"text": r["text"], "doc_id": r["doc_id"], "chunk_index": r["chunk_index"], "similarity_score": round(float(r["similarity_score"]), 2)} for r in rows]
 
-
 def search_chunks(query: str, user_id: int, k: int = 5) -> list[dict]:
     query_embedding = get_embeddings([query])[0]
-
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -125,11 +102,10 @@ def search_chunks(query: str, user_id: int, k: int = 5) -> list[dict]:
     conn.close()
     return [{"text": r["text"], "chunk_index": r["chunk_index"], "doc_id": r["doc_id"], "filename": r["filename"], "similarity": round(float(r["similarity"]), 3)} for r in rows]
 
-
 def generate_answer_stream(query: str, context_chunks: list[str], history: list[dict]):
     client = Groq(api_key=settings.groq_api_key)
     context = "\n\n".join(f"[Source {i+1}]:\n{chunk}" for i, chunk in enumerate(context_chunks))
-    messages = [{"role": "system", "content": "You are an expert document Q&A assistant. Answer questions ONLY based on the provided document context. If the answer is not found in the context, say clearly: 'I couldn't find that information in the document.' Be concise and accurate. Format with markdown when it helps clarity. Do NOT include source citations in your response."}]
+    messages = [{"role": "system", "content": "You are an expert document Q&A assistant. Answer ONLY based on the provided context. If not found, say: 'I couldn't find that information in the document.' Be concise. Use markdown when helpful. No source citations."}]
     for m in history[-6:]:
         messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": f"Document context:\n\n{context}\n\nQuestion: {query}"})
@@ -139,10 +115,8 @@ def generate_answer_stream(query: str, context_chunks: list[str], history: list[
         if delta:
             yield delta
 
-
 def generate_answer(query: str, context_chunks: list[str], history: list[dict]) -> str:
     return "".join(generate_answer_stream(query, context_chunks, history))
-
 
 def generate_summary_stream(context_chunks: list[str]):
     client = Groq(api_key=settings.groq_api_key)
