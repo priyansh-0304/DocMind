@@ -11,12 +11,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://docmind-frontend-a6bd.onrender.com",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -25,11 +21,9 @@ app.include_router(auth.router,      prefix="/auth")
 app.include_router(documents.router, prefix="/docs")
 app.include_router(chat.router,      prefix="/chat")
 
-
 @app.on_event("startup")
 def on_startup():
     init_db()
-
 
 @app.get("/health")
 def health():
