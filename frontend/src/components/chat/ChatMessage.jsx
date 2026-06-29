@@ -45,7 +45,11 @@ export default function ChatMessage({ message, index, searchQuery = '', isCurren
   }
 
   const formattedTime = message.timestamp
-    ? new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    ? new Date(message.timestamp).toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      })
     : ''
 
   const hasMatch = searchQuery && message.content.toLowerCase().includes(searchQuery.toLowerCase())
@@ -164,7 +168,7 @@ export default function ChatMessage({ message, index, searchQuery = '', isCurren
           })}
 
           <button
-            onClick={() => useStore.getState().retryMessage()}
+            onClick={() => useStore.getState().retryMessage(index)}
             className="flex items-center gap-1 text-[10px] font-mono text-muted
               hover:text-accent-purple border border-border hover:border-accent-purple/40
               bg-bg-secondary rounded-md px-2 py-1 transition-all hover:bg-accent-purple/5

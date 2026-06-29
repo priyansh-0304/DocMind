@@ -385,13 +385,11 @@ export default function AppPage() {
     localStorage.removeItem('highlightQuestion')
 
     setTimeout(() => {
-      const msgEls = document.querySelectorAll('[data-msg-index]')
-      const el = msgEls[idx]
+      const el = document.getElementById(`msg-${idx}`)
       if (!el) return
 
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
-      // Target the bubble div inside, not the full-width wrapper
       const bubble = el.querySelector('div[class*="rounded-2xl"]')
       if (!bubble) return
 

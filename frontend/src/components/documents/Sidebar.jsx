@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Brain, Upload, FileText, Trash2,
   Loader2, LogOut, Sparkles, CheckCircle,
-  Layers, Pencil, Tag, Plus, X, Check, Search
+  Layers, Pencil, Tag, Plus, X, Check, Search, ChevronDown, ChevronRight
 } from 'lucide-react'
 
 const TAG_COLORS = [
@@ -185,6 +185,7 @@ export default function Sidebar({ isOpen, onClose }) {
     setActiveTagFilter, loadHistory, logout, sendMessage, searchDocuments,
   } = useStore()
 
+  const [suggestionsOpen, setSuggestionsOpen] = useState(true)
   const [suggestions, setSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(true)
@@ -634,21 +635,42 @@ export default function Sidebar({ isOpen, onClose }) {
         {!multiMode && (suggestions.length > 0 || loadingSuggestions) && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
             className="px-3 pb-3 border-t border-border pt-3 flex-shrink-0">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Sparkles size={11} className="text-accent-teal" />
-              <p className="text-[10px] font-mono text-muted uppercase tracking-widest">Suggested</p>
-            </div>
-            {loadingSuggestions ? <SuggestionSkeleton /> : (
-              <div className="flex flex-col gap-1.5">
-                {suggestions.map((q, i) => (
-                  <motion.button key={i} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
-                    onClick={() => sendMessage(q)}
-                    className="text-left text-[11px] text-muted hover:text-accent-purple border border-border hover:border-accent-purple/40 rounded-lg px-2.5 py-1.5 transition-all leading-snug hover:bg-accent-purple/5">
-                    {q}
-                  </motion.button>
-                ))}
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles size={11} className="text-accent-teal" />
+                <p className="text-[10px] font-mono text-muted uppercase tracking-widest">Suggested</p>
               </div>
-            )}
+              <button
+                onClick={() => setSuggestionsOpen(s => !s)}
+                className="text-muted hover:text-accent-purple transition-colors"
+              >
+                <motion.div animate={{ rotate: suggestionsOpen ? 0 : -90 }} transition={{ duration: 0.2 }}>
+                  {suggestionsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                </motion.div>
+              </button>
+            </div>
+            <AnimatePresence initial={false}>
+              {suggestionsOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  {loadingSuggestions ? <SuggestionSkeleton /> : (
+                    <div className="flex flex-col gap-1.5">
+                      {suggestions.map((q, i) => (
+                        <motion.button key={i} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
+                          onClick={() => sendMessage(q)}
+                          className="text-left text-[11px] text-muted hover:text-accent-purple border border-border hover:border-accent-purple/40 rounded-lg px-2.5 py-1.5 transition-all leading-snug hover:bg-accent-purple/5">
+                          {q}
+                        </motion.button>
+                      ))}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>

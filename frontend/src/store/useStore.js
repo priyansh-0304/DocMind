@@ -231,7 +231,7 @@ export const useStore = create((set, get) => ({
         role: m.role,
         content: m.content,
         sources: [],
-        timestamp: m.created_at,
+        timestamp: m.created_at + 'Z',
         pinId: `${docId}-${m.created_at}`,
         pinned: false,
       })),
@@ -356,15 +356,15 @@ export const useStore = create((set, get) => ({
     }
   },
 
-  retryMessage: async () => {
+  retryMessage: async (assistantIndex) => {
     const { messages } = get()
-    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')
-    if (!lastUserMsg) return
-    const lastMsg = messages[messages.length - 1]
-    if (lastMsg?.role === 'assistant' && lastMsg.content.startsWith('Error:')) {
-      set((s) => ({ messages: s.messages.slice(0, -1) }))
-    }
-    await get().sendMessage(lastUserMsg.content)
+    
+    // Find the user message just before this assistant message
+    const userMsg = [...messages].slice(0, assistantIndex).reverse().find(m => m.role === 'user')
+    if (!userMsg) return
+
+    // Just resend — don't trim anything, new response appends at bottom
+    await get().sendMessage(userMsg.content)
   },
 
   togglePinMessage: (pinId) => {

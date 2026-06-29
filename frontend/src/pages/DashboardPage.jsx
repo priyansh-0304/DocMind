@@ -113,7 +113,7 @@ export default function DashboardPage() {
               doc: doc.filename.replace(/\.(pdf|txt|md)$/i, '').slice(0, 20),
               docId: doc.id,
               question: m.content.slice(0, 80) + (m.content.length > 80 ? '…' : ''),
-              time: m.created_at,
+              time: m.created_at + 'Z',
             })
           }
         }
@@ -298,7 +298,11 @@ export default function DashboardPage() {
                       {stats.docStats.filter(d => d.messages > 0).map((d, i) => (
                         <div key={i} className="flex items-center gap-2 min-w-0">
                           <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                          <span className="text-[11px] text-muted font-mono truncate">{d.name}</span>
+                          <div className="flex-1 min-w-0 overflow-hidden group/label">
+                            <div className="text-[11px] text-muted font-mono whitespace-nowrap group-hover/label:animate-marquee">
+                              {d.fullName}
+                            </div>
+                          </div>
                           <span className="text-[11px] font-mono ml-auto flex-shrink-0" style={{ color: PIE_COLORS[i % PIE_COLORS.length] }}>{d.messages}</span>
                         </div>
                       ))}
@@ -318,14 +322,35 @@ export default function DashboardPage() {
                 <h3 className="text-sm font-bold mb-1 text-[var(--text-color)]">Messages per Document</h3>
                 <p className="text-xs text-muted font-mono mb-4">total Q&A per file</p>
                 <ResponsiveContainer width="100%" height={180}>
-                  <BarChart data={stats.docStats}>
+                  <BarChart data={stats.docStats} margin={{ bottom: 30, left: 0, right: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-                    <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 10 }} axisLine={false} />
+                    <XAxis
+                      dataKey="name"
+                      axisLine={false}
+                      interval={0}
+                      tick={({ x, y, payload }) => (
+                        <g transform={`translate(${x},${y})`}>
+                          <text
+                            x={0} y={0} dy={12}
+                            textAnchor="end"
+                            fill={tickColor}
+                            fontSize={9}
+                            transform="rotate(-25)"
+                          >
+                            {payload.value.length > 8 ? payload.value.slice(0, 8) + '…' : payload.value}
+                          </text>
+                        </g>
+                      )}
+                    />
                     <YAxis tick={{ fill: tickColor, fontSize: 11 }} axisLine={false} allowDecimals={false} />
                     <Tooltip
                       contentStyle={{ background: tooltipBg, border: `1px solid ${tooltipBorder}`, borderRadius: 8 }}
                       labelStyle={{ color: tooltipLabel }}
                       itemStyle={{ color: '#5eead4' }}
+                      labelFormatter={(label) => {
+                        const doc = stats.docStats.find(d => d.name === label)
+                        return doc?.fullName || label
+                      }}
                     />
                     <Bar dataKey="messages" fill="#5eead4" radius={[4, 4, 0, 0]} />
                   </BarChart>
@@ -402,7 +427,11 @@ export default function DashboardPage() {
                         <p className="text-[10px] text-muted font-mono mt-0.5">{item.doc}</p>
                       </div>
                       <span className="text-[10px] font-mono text-muted flex-shrink-0">
-                        {new Date(item.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(item.time).toLocaleTimeString([], { 
+                          hour: '2-digit', 
+                          minute: '2-digit',
+                          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                        })}                      
                       </span>
                     </motion.div>
                   ))}

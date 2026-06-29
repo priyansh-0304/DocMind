@@ -96,3 +96,14 @@ body.light .hover-red:hover {
 .hover\:border-accent-purple\/40:hover { border-color: rgb(184 32 32 / 0.4) !important; }
 .hover\:bg-accent-purple\/5:hover { background-color: rgb(184 32 32 / 0.05) !important; }
 .hover\:border-accent-purple\/50:hover { border-color: rgb(184 32 32 / 0.5) !important; }
+
+@keyframes marquee {
+  0%   { transform: translateX(0); }
+  30%  { transform: translateX(0); }
+  70%  { transform: translateX(calc(-100% + 80px)); }
+  100% { transform: translateX(calc(-100% + 80px)); }
+}
+
+.animate-marquee {
+  animation: marquee 2s ease-in-out forwards;
+}

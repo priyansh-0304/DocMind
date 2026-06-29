@@ -60,6 +60,7 @@ def embed_and_store(doc_id: int, chunks: list[str]) -> int:
     return len(chunks)
 
 
+# CHANGED: returns list[dict] with text + similarity_score
 def retrieve_chunks(query: str, doc_id: int, k: int = 4) -> list[dict]:
     model = get_model()
     query_embedding = model.encode([query])[0].tolist()
@@ -85,7 +86,11 @@ def retrieve_chunks(query: str, doc_id: int, k: int = 4) -> list[dict]:
     ]
 
 
-def generate_answer(query: str, context_chunks: list[str], history: list[dict]) -> str:
+def generate_answer(
+    query: str,
+    context_chunks: list[str],  # expects plain strings
+    history: list[dict],
+) -> str:
     client = Groq(api_key=settings.groq_api_key)
 
     context = "\n\n".join(
@@ -120,7 +125,11 @@ def generate_answer(query: str, context_chunks: list[str], history: list[dict]) 
     return response.choices[0].message.content
 
 
-def generate_answer_stream(query: str, context_chunks: list[str], history: list[dict]):
+def generate_answer_stream(
+    query: str,
+    context_chunks: list[str],  # expects plain strings
+    history: list[dict],
+):
     client = Groq(api_key=settings.groq_api_key)
 
     context = "\n\n".join(
@@ -161,6 +170,7 @@ def generate_answer_stream(query: str, context_chunks: list[str], history: list[
 
 
 def generate_summary_stream(context_chunks: list[str]):
+    """Generate a concise document summary from the first few chunks."""
     client = Groq(api_key=settings.groq_api_key)
 
     context = "\n\n".join(context_chunks)
@@ -187,6 +197,7 @@ def generate_summary_stream(context_chunks: list[str]):
             yield delta
 
 
+# CHANGED: now returns similarity_score from actual row value
 def retrieve_chunks_multi(query: str, doc_ids: list[int], k: int = 6) -> list[dict]:
     model = get_model()
     query_embedding = model.encode([query])[0].tolist()
@@ -220,6 +231,7 @@ def retrieve_chunks_multi(query: str, doc_ids: list[int], k: int = 6) -> list[di
 
 
 def search_chunks(query: str, user_id: int, k: int = 5) -> list[dict]:
+    """Search across all chunks belonging to a user's documents."""
     model = get_model()
     query_embedding = model.encode([query])[0].tolist()
 
