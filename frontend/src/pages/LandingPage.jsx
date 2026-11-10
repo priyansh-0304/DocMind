@@ -11,7 +11,7 @@ const FEATURES = [
   {
     icon: '◈',
     title: 'Streaming Responses',
-    desc: 'Answers stream token by token via LLaMA 3.1. No waiting. Grounded entirely in your document.',
+    desc: 'Answers stream token by token. No waiting. Grounded entirely in your document.',
   },
   {
     icon: '⊕',
@@ -180,7 +180,7 @@ export default function LandingPage() {
             style={{ border: '1px solid rgba(184,32,32,0.3)', background: 'rgba(184,32,32,0.1)' }}
           >
             <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: '#e57373' }} />
-            <span className="text-xs font-mono" style={{ color: '#e57373' }}>RAG · pgvector · LLaMA 3.1 · FastAPI</span>
+            <span className="text-xs font-mono" style={{ color: '#e57373' }}>RAG · pgvector · Groq · FastAPI</span>
           </motion.div>
 
           {/* Headline */}
@@ -377,7 +377,7 @@ export default function LandingPage() {
         <div className="max-w-5xl mx-auto">
           <p className="text-center text-xs font-mono text-gray-600 uppercase tracking-widest mb-10">Built with</p>
           <div className="flex flex-wrap items-center justify-center gap-6">
-            {['React', 'FastAPI', 'PostgreSQL', 'pgvector', 'LLaMA 3.1', 'Groq', 'Docker', 'JWT', 'Framer Motion', 'Tailwind'].map((tech, i) => (
+            {['React', 'FastAPI', 'PostgreSQL', 'pgvector', 'Groq', 'Docker', 'JWT', 'Framer Motion', 'Tailwind'].map((tech, i) => (
               <motion.span
                 key={i}
                 initial={{ opacity: 0 }}
@@ -441,7 +441,7 @@ export default function LandingPage() {
           <span className="text-sm font-bold text-gray-500">DocMind</span>
         </div>
         <p className="text-xs text-gray-600 font-mono">
-          Built by Priyansh Arora · RAG + pgvector + LLaMA 3.1
+          Built by Priyansh Arora · RAG + pgvector + Groq
         </p>
       </footer>
     </div>

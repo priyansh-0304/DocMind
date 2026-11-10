@@ -145,14 +145,16 @@ export default function ChatMessage({ message, index, searchQuery = '', isCurren
           {message.sources?.map((src, i) => {
             const score = src?.similarity_score
             const pct = score != null ? Math.round(score * 100) : null
-            const color = pct == null ? null
-              : pct >= 80 ? '#5eead4'   // teal — high confidence
-              : pct >= 55 ? '#f59e0b'   // amber — medium
-              : '#f97316'                // orange — low
+            // Shown as plain similarity, not colour-coded confidence: on the
+            // evaluation set (rag_eval/calibration.md) the score was only a weak
+            // predictor of whether a chunk actually held the answer.
 
             return (
               <span
                 key={i}
+                title={pct != null
+                  ? `Similarity to your question: ${pct}%. A closer match, not a guarantee that the chunk answers it.`
+                  : undefined}
                 className="flex items-center gap-1.5 text-[10px] font-mono bg-bg-secondary border border-border text-muted px-2 py-1 rounded-md"
               >
                 <BookOpen size={9} />
@@ -160,7 +162,7 @@ export default function ChatMessage({ message, index, searchQuery = '', isCurren
                 {pct != null && (
                   <>
                     <span className="w-px h-3 bg-border" />
-                    <span style={{ color }} className="font-mono">{pct}%</span>
+                    <span className="font-mono">{pct}%</span>
                   </>
                 )}
               </span>

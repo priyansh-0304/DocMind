@@ -5,11 +5,36 @@ from app.auth.utils import get_current_user
 from app.models.schemas import ChatRequest, ChatResponse, MultiChatRequest
 from app.rag.pipeline import (
     retrieve_chunks, generate_answer,
-    generate_answer_stream, retrieve_chunks_multi
+    generate_answer_stream, retrieve_chunks_multi,
+    BACKGROUND_MODEL, BACKGROUND_LOCK,
 )
 import json
+import logging
+import re
 
 router = APIRouter(tags=["Chat"])
+logger = logging.getLogger("uvicorn.error")  # shows up in the uvicorn terminal
+
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+# Fixed on the server: suggestions are stored per document, so the prompt must not
+# depend on what a client sends.
+SUGGEST_PROMPT = (
+    'Generate exactly 3 short questions (max 8 words each) someone might ask about this document. '
+    'Return ONLY a JSON array of strings. Example: ["What is X?", "How does Y work?", "What are the Z?"]'
+)
+
+
+def parse_questions(text: str) -> list[str]:
+    """Pull the first JSON array of strings out of the model output (max 3)."""
+    match = re.search(r"\[.*?\]", text, re.S)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except Exception:
+        return []
+    return [q.strip() for q in data if isinstance(q, str) and q.strip()][:3]
 
 
 @router.post("/", response_model=ChatResponse)
@@ -182,34 +207,83 @@ def suggest_questions(req: ChatRequest, user=Depends(get_current_user)):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id FROM documents WHERE id = %s AND user_id = %s",
+        "SELECT id, suggestions FROM documents WHERE id = %s AND user_id = %s",
         (req.doc_id, user["id"]),
     )
-    if not cur.fetchone():
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
         raise HTTPException(404, "Document not found.")
 
-    chunks = retrieve_chunks(req.query, req.doc_id, k=2)
+    # Generated once per document: serve the stored questions, no retrieval or model call.
+    if row["suggestions"]:
+        cur.close()
+        conn.close()
+        cached = row["suggestions"]
+
+        def cached_stream():
+            yield f"data: {json.dumps({'text': cached, 'done': True})}\n\n"
+
+        return StreamingResponse(cached_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+    # The opening chunk (title, abstract, introduction) is enough to write three overview
+    # questions, and a single chunk keeps this request to roughly 1K tokens.
+    cur.execute(
+        "SELECT text FROM chunks WHERE doc_id = %s ORDER BY chunk_index ASC LIMIT 1",
+        (req.doc_id,),
+    )
+    first = cur.fetchone()
     cur.close()
     conn.close()
 
-    if not chunks:
+    if not first:
         def empty():
             yield f"data: {json.dumps({'text': '[]', 'done': True})}\n\n"
         return StreamingResponse(empty(), media_type="text/event-stream")
 
-    chunk_texts = [c["text"] for c in chunks]
+    chunk_texts = [first["text"]]
     history = []
 
     def stream_suggestions():
-        for token in generate_answer_stream(req.query, chunk_texts, history):
-            yield f"data: {json.dumps({'text': token, 'done': False})}\n\n"
+        parts = []
+        try:
+            # Background model + fail fast: suggestions must never hold up chat answers
+            with BACKGROUND_LOCK:
+                for token in generate_answer_stream(
+                    SUGGEST_PROMPT, chunk_texts, history,
+                    model=BACKGROUND_MODEL, max_retries=0,
+                ):
+                    parts.append(token)
+                    yield f"data: {json.dumps({'text': token, 'done': False})}\n\n"
+        except Exception:
+            # e.g. rate limit or model error: tell the client instead of hanging
+            logger.exception("Suggestion generation failed for document %s", req.doc_id)
+            yield f"data: {json.dumps({'text': '', 'done': True, 'error': True})}\n\n"
+            return
+
+        # Store only a complete, valid result. If the client disconnects mid-stream
+        # (the user moved to another document), this is never reached.
+        questions = parse_questions("".join(parts))
+        if not questions:
+            logger.warning("Suggestions for document %s were not a usable JSON list", req.doc_id)
+        if questions:
+            try:
+                save_conn = get_db_connection()
+                save_cur = save_conn.cursor()
+                save_cur.execute(
+                    "UPDATE documents SET suggestions = %s WHERE id = %s",
+                    (json.dumps(questions), req.doc_id),
+                )
+                save_conn.commit()
+                save_cur.close()
+                save_conn.close()
+            except Exception:
+                pass  # caching is best-effort; the questions were still delivered
+
         yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
 
-    return StreamingResponse(
-        stream_suggestions(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(stream_suggestions(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 
 @router.get("/activity")

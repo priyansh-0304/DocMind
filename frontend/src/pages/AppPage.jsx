@@ -116,8 +116,12 @@ export default function AppPage() {
   // Summary state
   const [summary, setSummary] = useState('')
   const [loadingSummary, setLoadingSummary] = useState(false)
-  const [summaryDocId, setSummaryDocId] = useState(null)
+  const [summaryError, setSummaryError] = useState(false)
   const [summaryDismissed, setSummaryDismissed] = useState(false)
+  // Finished summaries by document id, so switching back never refetches
+  const summaryCache = useRef({})
+  // Controller for the summary request currently in flight (if any)
+  const summaryAbort = useRef(null)
 
   // Search state
   const [showSearch, setShowSearch] = useState(false)
@@ -282,43 +286,84 @@ export default function AppPage() {
   }
 
   const generateSummary = async (doc) => {
-    if (summaryDocId === doc.id && summary) return
-    setSummary('')
-    setSummaryDocId(doc.id)
+    // Stop any summary request still running for a previously selected document
+    summaryAbort.current?.abort()
     setSummaryDismissed(false)
+    setSummaryError(false)
+
+    // Generated earlier this session: show it instantly, no request at all
+    const cached = summaryCache.current[doc.id]
+    if (cached) {
+      setSummary(cached)
+      setLoadingSummary(false)
+      return
+    }
+
+    const controller = new AbortController()
+    summaryAbort.current = controller
+    setSummary('')
     setLoadingSummary(true)
+
+    let full = ''
+    let failed = false
     try {
       const token = localStorage.getItem('token')
       const res = await fetch(`/docs/${doc.id}/summary`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       })
+      if (!res.ok || !res.body) throw new Error('summary request failed')
+
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
+      let buffer = ''
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n').filter(l => l.startsWith('data: '))
-        for (const line of lines) {
+        // Events end with a blank line; keep any partial event for the next read
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop()
+        for (const evt of events) {
+          const line = evt.split('\n').find(l => l.startsWith('data: '))
+          if (!line) continue
           try {
             const data = JSON.parse(line.slice(6))
-            if (data.text) setSummary(s => s + data.text)
+            if (data.error) failed = true
+            if (data.text) {
+              full += data.text
+              if (!controller.signal.aborted) setSummary(s => s + data.text)
+            }
           } catch (_) {}
         }
       }
-    } catch (_) {}
-    finally { setLoadingSummary(false) }
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      failed = true
+    } finally {
+      // Only the newest request is allowed to turn the spinner off
+      if (summaryAbort.current === controller) setLoadingSummary(false)
+    }
+
+    if (controller.signal.aborted) return
+    if (full && !failed) summaryCache.current[doc.id] = full
+    else if (failed && !full) setSummaryError(true)
   }
 
   useEffect(() => { fetchDocuments() }, [])
+
+  // Cancel an in-flight summary request if the page unmounts
+  useEffect(() => () => summaryAbort.current?.abort(), [])
 
   useEffect(() => {
     if (activeDoc) {
       window.dispatchEvent(new CustomEvent('regenerate-suggestions', { detail: activeDoc }))
       generateSummary(activeDoc)
     } else {
+      summaryAbort.current?.abort()
       setSummary('')
-      setSummaryDocId(null)
+      setLoadingSummary(false)
+      setSummaryError(false)
       setSummaryDismissed(false)
     }
   }, [activeDoc?.id])
@@ -637,7 +682,7 @@ export default function AppPage() {
           </AnimatePresence>
 
           <AnimatePresence>
-            {activeDoc && !summaryDismissed && (summary || loadingSummary) && (
+            {activeDoc && !summaryDismissed && (summary || loadingSummary || summaryError) && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}
                 className="flex flex-col gap-2 items-start">
                 <span className="text-[10px] font-mono text-muted px-1">TL;DR</span>
@@ -646,6 +691,14 @@ export default function AppPage() {
                     <div className="flex items-center gap-2">
                       <Loader2 size={11} className="animate-spin text-muted" />
                       <span className="text-[11px] text-muted font-mono">summarizing…</span>
+                    </div>
+                  ) : summaryError && !summary ? (
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-muted font-mono">couldn't generate a summary right now (if it's a rate limit, wait ~30s)</span>
+                      <button onClick={() => generateSummary(activeDoc)}
+                        className="text-[11px] font-mono text-accent-purple hover:underline">
+                        retry
+                      </button>
                     </div>
                   ) : (
                     <p className="text-xs text-muted leading-relaxed">{summary}</p>
@@ -675,7 +728,7 @@ export default function AppPage() {
         <div className="px-4 md:px-6 py-4 border-t border-border bg-bg-secondary">
           <ChatInput onSend={sendMessage} disabled={!activeDoc || isThinking} />
           <p className="hidden md:block text-[10px] text-muted font-mono mt-2 text-center">
-            Powered by LLaMA 3.1 + pgvector · press <kbd className="px-1 py-0.5 rounded border border-border bg-bg-tertiary text-[9px]">/</kbd> for shortcuts
+            Powered by Groq + pgvector · press <kbd className="px-1 py-0.5 rounded border border-border bg-bg-tertiary text-[9px]">/</kbd> for shortcuts
           </p>
         </div>
       </div>

@@ -35,6 +35,11 @@ def init_db():
         );
     """)
 
+    # Cached TL;DR and suggested questions, generated once per document (added after
+    # the first release, so applied as migrations for databases that already have the table).
+    cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS summary TEXT;")
+    cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS suggestions TEXT;")
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS chunks (
             id SERIAL PRIMARY KEY,
@@ -46,10 +51,14 @@ def init_db():
         );
     """)
 
+    # Retrieval always filters by document, so a plain btree on doc_id plus an
+    # exact distance sort is both fast and complete at this scale. The previous
+    # ivfflat index (lists=100, built on an empty table, default probes=1) could
+    # return no rows at all for small collections because the filter is applied
+    # after the approximate index scan.
     cur.execute("""
-        CREATE INDEX IF NOT EXISTS chunks_embedding_idx
-        ON chunks USING ivfflat (embedding vector_cosine_ops)
-        WITH (lists = 100);
+        CREATE INDEX IF NOT EXISTS chunks_doc_id_idx
+        ON chunks (doc_id);
     """)
 
     cur.execute("""

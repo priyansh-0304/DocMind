@@ -1,14 +1,17 @@
+import logging
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.db import get_db_connection
 from app.auth.utils import get_current_user
 from app.models.schemas import DocumentOut, TagOut, TagCreate, TagAssign
-from app.rag.pipeline import extract_text_from_pdf, chunk_text, embed_and_store, generate_summary_stream
+from app.rag.pipeline import extract_text_from_pdf, chunk_text, embed_and_store, generate_summary_stream, BACKGROUND_LOCK
 import json
 from app.rag.pipeline import extract_text_from_pdf, chunk_text, embed_and_store, generate_summary_stream, search_chunks
 
 router = APIRouter(tags=["Documents"])
+logger = logging.getLogger("uvicorn.error")  # shows up in the uvicorn terminal
 
 ALLOWED_TYPES = {"application/pdf", "text/plain", "text/markdown"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -152,8 +155,10 @@ async def upload_document(
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(400, "File size exceeds 10 MB limit.")
 
+    # PDF parsing and embedding are CPU-heavy. Running them directly inside this
+    # async route would freeze the whole API (reloads, deletes, chat) until they finish.
     if file.content_type == "application/pdf":
-        text = extract_text_from_pdf(content)
+        text = await run_in_threadpool(extract_text_from_pdf, content)
     else:
         text = content.decode("utf-8")
 
@@ -172,7 +177,7 @@ async def upload_document(
     conn.close()
 
     chunks = chunk_text(text, chunk_size=500, overlap=50)
-    embed_and_store(doc["id"], chunks)
+    await run_in_threadpool(embed_and_store, doc["id"], chunks)
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -226,19 +231,40 @@ def rename_document(doc_id: int, body: RenameRequest, user=Depends(get_current_u
     return result
 
 
+SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+# A TL;DR only needs the opening of the document. Six full chunks was 4-5K tokens per request,
+# more than half of the free plan's 8K-per-minute budget for a single summary.
+SUMMARY_WORDS = 1200
+
+
 @router.get("/{doc_id}/summary")
 def get_summary(doc_id: int, user=Depends(get_current_user)):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id FROM documents WHERE id = %s AND user_id = %s",
+        "SELECT id, summary FROM documents WHERE id = %s AND user_id = %s",
         (doc_id, user["id"]),
     )
-    if not cur.fetchone():
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
         raise HTTPException(404, "Document not found.")
 
+    # Already generated once: return the stored summary, no model call.
+    if row["summary"]:
+        cur.close()
+        conn.close()
+        cached = row["summary"]
+
+        def cached_stream():
+            yield f"data: {json.dumps({'text': cached, 'done': True})}\n\n"
+
+        return StreamingResponse(cached_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
+
     cur.execute(
-        "SELECT text FROM chunks WHERE doc_id = %s ORDER BY chunk_index ASC LIMIT 6",
+        "SELECT text FROM chunks WHERE doc_id = %s ORDER BY chunk_index ASC LIMIT 3",
         (doc_id,),
     )
     rows = cur.fetchall()
@@ -250,17 +276,45 @@ def get_summary(doc_id: int, user=Depends(get_current_user)):
         def empty():
             yield f"data: {json.dumps({'text': 'No content found.', 'done': True})}\n\n"
         return StreamingResponse(empty(), media_type="text/event-stream")
+    chunks = [" ".join(" ".join(chunks).split()[:SUMMARY_WORDS])]
 
     def stream():
-        for token in generate_summary_stream(chunks):
-            yield f"data: {json.dumps({'text': token, 'done': False})}\n\n"
+        parts = []
+        try:
+            with BACKGROUND_LOCK:
+                for token in generate_summary_stream(chunks):
+                    parts.append(token)
+                    yield f"data: {json.dumps({'text': token, 'done': False})}\n\n"
+        except Exception:
+            # e.g. rate limit or model error: tell the client instead of hanging
+            logger.exception("Summary generation failed for document %s", doc_id)
+            yield f"data: {json.dumps({'text': '', 'done': True, 'error': True})}\n\n"
+            return
+
+        summary = "".join(parts).strip()
+        if not summary:
+            logger.warning("Summary generation returned no text for document %s", doc_id)
+            yield f"data: {json.dumps({'text': '', 'done': True, 'error': True})}\n\n"
+            return
+
+        # Store only complete summaries. If the client disconnects mid-stream
+        # (for example, the user switched documents), this line is never reached.
+        try:
+            save_conn = get_db_connection()
+            save_cur = save_conn.cursor()
+            save_cur.execute(
+                "UPDATE documents SET summary = %s WHERE id = %s",
+                (summary, doc_id),
+            )
+            save_conn.commit()
+            save_cur.close()
+            save_conn.close()
+        except Exception:
+            pass  # caching is best-effort; the summary was still delivered
+
         yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
 
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 @router.get("/search")
 def search_documents(q: str, user=Depends(get_current_user)):
@@ -268,7 +322,18 @@ def search_documents(q: str, user=Depends(get_current_user)):
     if not q or len(q.strip()) < 2:
         raise HTTPException(400, "Query must be at least 2 characters.")
     
-    results = search_chunks(q.strip(), user["id"], k=5)
+    # The best chunks overall can all come from one document (for example a paper with
+    # many GPU paragraphs). This search is for finding documents, so keep only the best
+    # chunk of each one and show up to 5 different documents.
+    ranked = search_chunks(q.strip(), user["id"], k=50)
+    results, seen = [], set()
+    for r in ranked:
+        if r["doc_id"] in seen:
+            continue
+        seen.add(r["doc_id"])
+        results.append(r)
+        if len(results) == 5:
+            break
     return results
 
 @router.delete("/{doc_id}", status_code=204)

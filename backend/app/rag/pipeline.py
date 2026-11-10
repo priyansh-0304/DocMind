@@ -1,8 +1,29 @@
+import threading
 import fitz  # PyMuPDF
 from sentence_transformers import SentenceTransformer
 from app.db import get_db_connection
 from app.config import settings
 from groq import Groq
+
+# Chosen via rag_eval: beat all-MiniLM-L6-v2 on Hit@4 (0.86 vs 0.71) and MRR
+# (0.72 vs 0.57) at the same 500/50 chunking. Same 384 dims, so no schema change.
+# NOTE: changing this requires re-embedding every stored chunk (reindex_chunks.py).
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
+# bge expects this prefix on queries only (not on passages).
+QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+# Groq no longer serves llama-3.1-8b-instant (404 model_not_found).
+# gpt-oss-20b is a reasoning model: reasoning tokens count toward max_tokens,
+# so keep effort low and leave a larger token budget.
+GEN_MODEL = "openai/gpt-oss-20b"
+# Summaries and suggested questions run on a different model on purpose: Groq's free
+# plan lists its token-per-minute limit per model, so they no longer compete with chat
+# answers for the same budget.
+BACKGROUND_MODEL = "openai/gpt-oss-120b"
+LOW_REASONING = {"reasoning_effort": "low"}
+# Summaries and suggestions both use BACKGROUND_MODEL and start together on a first view.
+# Running them one at a time keeps their combined tokens within one minute's budget.
+BACKGROUND_LOCK = threading.Lock()
 
 _model = None
 
@@ -11,15 +32,20 @@ def get_model():
     global _model
     if _model is None:
         print("Loading sentence-transformers model...")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        _model = SentenceTransformer(MODEL_NAME)
     return _model
+
+
+def embed_query(query: str) -> list[float]:
+    return get_model().encode([QUERY_PREFIX + query])[0].tolist()
 
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
     for page in doc:
-        pages.append(page.get_text())
+        # Some PDFs yield NUL (0x00) characters, which PostgreSQL refuses to store.
+        pages.append(page.get_text().replace("\x00", ""))
     return "\n\n".join(pages)
 
 
@@ -62,8 +88,7 @@ def embed_and_store(doc_id: int, chunks: list[str]) -> int:
 
 # CHANGED: returns list[dict] with text + similarity_score
 def retrieve_chunks(query: str, doc_id: int, k: int = 4) -> list[dict]:
-    model = get_model()
-    query_embedding = model.encode([query])[0].tolist()
+    query_embedding = embed_query(query)
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -118,9 +143,10 @@ def generate_answer(
     })
 
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=GEN_MODEL,
         messages=messages,
-        max_tokens=1000,
+        max_tokens=2000,
+        extra_body=LOW_REASONING,
     )
     return response.choices[0].message.content
 
@@ -129,8 +155,10 @@ def generate_answer_stream(
     query: str,
     context_chunks: list[str],  # expects plain strings
     history: list[dict],
+    model: str = GEN_MODEL,
+    max_retries: int = 2,  # SDK default; 0 = fail fast instead of waiting out a rate limit
 ):
-    client = Groq(api_key=settings.groq_api_key)
+    client = Groq(api_key=settings.groq_api_key, max_retries=max_retries)
 
     context = "\n\n".join(
         f"[Source {i + 1}]:\n{chunk}" for i, chunk in enumerate(context_chunks)
@@ -157,9 +185,10 @@ def generate_answer_stream(
     })
 
     stream = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=model,
         messages=messages,
-        max_tokens=1000,
+        max_tokens=2000,
+        extra_body=LOW_REASONING,
         stream=True,
     )
 
@@ -171,12 +200,14 @@ def generate_answer_stream(
 
 def generate_summary_stream(context_chunks: list[str]):
     """Generate a concise document summary from the first few chunks."""
-    client = Groq(api_key=settings.groq_api_key)
+    # max_retries=0: if rate limited, fail at once so the UI can offer a retry,
+    # instead of the SDK silently waiting out a retry-after of up to a minute.
+    client = Groq(api_key=settings.groq_api_key, max_retries=0)
 
     context = "\n\n".join(context_chunks)
 
     stream = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=BACKGROUND_MODEL,
         messages=[
             {
                 "role": "system",
@@ -187,7 +218,8 @@ def generate_summary_stream(context_chunks: list[str]):
                 "content": f"Summarize this document:\n\n{context}",
             },
         ],
-        max_tokens=200,
+        max_tokens=800,
+        extra_body=LOW_REASONING,
         stream=True,
     )
 
@@ -199,8 +231,7 @@ def generate_summary_stream(context_chunks: list[str]):
 
 # CHANGED: now returns similarity_score from actual row value
 def retrieve_chunks_multi(query: str, doc_ids: list[int], k: int = 6) -> list[dict]:
-    model = get_model()
-    query_embedding = model.encode([query])[0].tolist()
+    query_embedding = embed_query(query)
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -232,8 +263,7 @@ def retrieve_chunks_multi(query: str, doc_ids: list[int], k: int = 6) -> list[di
 
 def search_chunks(query: str, user_id: int, k: int = 5) -> list[dict]:
     """Search across all chunks belonging to a user's documents."""
-    model = get_model()
-    query_embedding = model.encode([query])[0].tolist()
+    query_embedding = embed_query(query)
 
     conn = get_db_connection()
     cur = conn.cursor()

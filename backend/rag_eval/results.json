@@ -1,0 +1,134 @@
+[
+  {
+    "model": "BAAI/bge-small-en-v1.5",
+    "chunk_size": 500,
+    "overlap": 50,
+    "chunks": 94,
+    "questions": 42,
+    "mrr": 0.724,
+    "hit@1": 0.619,
+    "hit@4": 0.857,
+    "hit@8": 0.929
+  },
+  {
+    "model": "all-MiniLM-L6-v2",
+    "chunk_size": 100,
+    "overlap": 10,
+    "chunks": 463,
+    "questions": 42,
+    "mrr": 0.667,
+    "hit@1": 0.476,
+    "hit@4": 0.881,
+    "hit@8": 0.976
+  },
+  {
+    "model": "all-MiniLM-L6-v2",
+    "chunk_size": 200,
+    "overlap": 20,
+    "chunks": 233,
+    "questions": 42,
+    "mrr": 0.664,
+    "hit@1": 0.524,
+    "hit@4": 0.786,
+    "hit@8": 0.881
+  },
+  {
+    "model": "BAAI/bge-small-en-v1.5",
+    "chunk_size": 200,
+    "overlap": 20,
+    "chunks": 233,
+    "questions": 42,
+    "mrr": 0.654,
+    "hit@1": 0.476,
+    "hit@4": 0.833,
+    "hit@8": 0.952
+  },
+  {
+    "model": "BAAI/bge-small-en-v1.5",
+    "chunk_size": 300,
+    "overlap": 30,
+    "chunks": 156,
+    "questions": 42,
+    "mrr": 0.65,
+    "hit@1": 0.476,
+    "hit@4": 0.857,
+    "hit@8": 0.929
+  },
+  {
+    "model": "all-MiniLM-L6-v2",
+    "chunk_size": 500,
+    "overlap": 100,
+    "chunks": 105,
+    "questions": 42,
+    "mrr": 0.649,
+    "hit@1": 0.548,
+    "hit@4": 0.762,
+    "hit@8": 0.857
+  },
+  {
+    "model": "all-mpnet-base-v2",
+    "chunk_size": 500,
+    "overlap": 50,
+    "chunks": 94,
+    "questions": 42,
+    "mrr": 0.627,
+    "hit@1": 0.5,
+    "hit@4": 0.738,
+    "hit@8": 0.857
+  },
+  {
+    "model": "all-MiniLM-L6-v2",
+    "chunk_size": 300,
+    "overlap": 30,
+    "chunks": 156,
+    "questions": 42,
+    "mrr": 0.626,
+    "hit@1": 0.476,
+    "hit@4": 0.786,
+    "hit@8": 0.833
+  },
+  {
+    "model": "all-MiniLM-L6-v2",
+    "chunk_size": 500,
+    "overlap": 50,
+    "chunks": 94,
+    "questions": 42,
+    "mrr": 0.572,
+    "hit@1": 0.405,
+    "hit@4": 0.714,
+    "hit@8": 0.762
+  },
+  {
+    "model": "all-MiniLM-L6-v2",
+    "chunk_size": 500,
+    "overlap": 0,
+    "chunks": 86,
+    "questions": 42,
+    "mrr": 0.539,
+    "hit@1": 0.381,
+    "hit@4": 0.667,
+    "hit@8": 0.738
+  },
+  {
+    "model": "all-mpnet-base-v2",
+    "chunk_size": 300,
+    "overlap": 30,
+    "chunks": 156,
+    "questions": 42,
+    "mrr": 0.532,
+    "hit@1": 0.357,
+    "hit@4": 0.667,
+    "hit@8": 0.857
+  },
+  {
+    "model": "all-mpnet-base-v2",
+    "chunk_size": 200,
+    "overlap": 20,
+    "chunks": 233,
+    "questions": 42,
+    "mrr": 0.51,
+    "hit@1": 0.357,
+    "hit@4": 0.619,
+    "hit@8": 0.81
+  }
+]

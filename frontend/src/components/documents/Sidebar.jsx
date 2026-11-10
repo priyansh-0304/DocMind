@@ -188,6 +188,10 @@ export default function Sidebar({ isOpen, onClose }) {
   const [suggestionsOpen, setSuggestionsOpen] = useState(true)
   const [suggestions, setSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  // Suggested questions are generated once per document and kept here for the session
+  const suggestionsCache = useRef({})      // docId -> string[]
+  const suggestionsInFlight = useRef({})   // docId -> Promise (shared by duplicate callers)
+  const suggestionsFor = useRef(null)      // docId the panel is currently showing/loading
   const [loadingDocs, setLoadingDocs] = useState(true)
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
@@ -287,9 +291,8 @@ export default function Sidebar({ isOpen, onClose }) {
     finally { setSearchingDocs(false) }
   }
 
-  const generateSuggestions = async (doc) => {
-    setLoadingSuggestions(true)
-    setSuggestions([])
+  // Fetches the suggested questions for one document. Touches no UI state.
+  const fetchSuggestions = async (doc) => {
     try {
       const token = localStorage.getItem('token')
       const res = await fetch('/chat/suggest', {
@@ -301,15 +304,21 @@ export default function Sidebar({ isOpen, onClose }) {
           history: [],
         }),
       })
+      if (!res.ok || !res.body) return []
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
+      let buffer = ''
       let fullText = ''
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n').filter(l => l.startsWith('data: '))
-        for (const line of lines) {
+        // Events end with a blank line; keep any partial event for the next read
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split('\n\n')
+        buffer = events.pop()
+        for (const evt of events) {
+          const line = evt.split('\n').find(l => l.startsWith('data: '))
+          if (!line) continue
           try {
             const data = JSON.parse(line.slice(6))
             if (data.text) fullText += data.text
@@ -317,9 +326,40 @@ export default function Sidebar({ isOpen, onClose }) {
         }
       }
       const match = fullText.match(/\[.*?\]/s)
-      if (match) setSuggestions(JSON.parse(match[0]).slice(0, 3))
+      if (match) return JSON.parse(match[0]).filter(q => typeof q === 'string').slice(0, 3)
     } catch (_) {}
-    finally { setLoadingSuggestions(false) }
+    return []
+  }
+
+  const generateSuggestions = async (doc) => {
+    suggestionsFor.current = doc.id
+
+    // Already have them for this document: show instantly, no request
+    const cached = suggestionsCache.current[doc.id]
+    if (cached) {
+      setSuggestions(cached)
+      setLoadingSuggestions(false)
+      return
+    }
+
+    setSuggestions([])
+    setLoadingSuggestions(true)
+
+    // Several parts of the app ask for suggestions when a document is selected.
+    // If a request for this document is already running, share it instead of starting another.
+    if (!suggestionsInFlight.current[doc.id]) {
+      suggestionsInFlight.current[doc.id] = fetchSuggestions(doc).finally(() => {
+        delete suggestionsInFlight.current[doc.id]
+      })
+    }
+    const result = await suggestionsInFlight.current[doc.id]
+    if (result.length) suggestionsCache.current[doc.id] = result
+
+    // Only touch the panel if this document is still the one being shown
+    if (suggestionsFor.current === doc.id) {
+      setSuggestions(result)
+      setLoadingSuggestions(false)
+    }
   }
 
   useEffect(() => {
@@ -378,6 +418,7 @@ export default function Sidebar({ isOpen, onClose }) {
     e.stopPropagation()
     if (!confirm(`Delete "${doc.filename}"?`)) return
     await deleteDocument(doc.id)
+    delete suggestionsCache.current[doc.id]
     setSuggestions([])
     toast.success('Document deleted')
   }
