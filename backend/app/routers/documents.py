@@ -1,4 +1,5 @@
 import logging
+import time
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
@@ -6,9 +7,9 @@ from pydantic import BaseModel
 from app.db import get_db_connection
 from app.auth.utils import get_current_user
 from app.models.schemas import DocumentOut, TagOut, TagCreate, TagAssign
-from app.rag.pipeline import extract_text_from_pdf, chunk_text, embed_and_store, generate_summary_stream, BACKGROUND_LOCK
 import json
-from app.rag.pipeline import extract_text_from_pdf, chunk_text, embed_and_store, generate_summary_stream, search_chunks
+from app.prepare import PREP_WAIT_SECONDS, ensure_worker, prioritize, read_prepared
+from app.rag.pipeline import extract_text_from_pdf, chunk_text, embed_and_store, search_chunks
 
 router = APIRouter(tags=["Documents"])
 logger = logging.getLogger("uvicorn.error")  # shows up in the uvicorn terminal
@@ -178,6 +179,7 @@ async def upload_document(
 
     chunks = chunk_text(text, chunk_size=500, overlap=50)
     await run_in_threadpool(embed_and_store, doc["id"], chunks)
+    ensure_worker()  # summary and suggestions are prepared in the background, one document at a time
 
     conn = get_db_connection()
     cur = conn.cursor()
@@ -191,6 +193,7 @@ async def upload_document(
 
 @router.get("/", response_model=list[DocumentOut])
 def list_documents(user=Depends(get_current_user)):
+    ensure_worker()
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
@@ -233,9 +236,9 @@ def rename_document(doc_id: int, body: RenameRequest, user=Depends(get_current_u
 
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
-# A TL;DR only needs the opening of the document. Six full chunks was 4-5K tokens per request,
-# more than half of the free plan's 8K-per-minute budget for a single summary.
-SUMMARY_WORDS = 1200
+
+def sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 @router.get("/{doc_id}/summary")
@@ -252,69 +255,48 @@ def get_summary(doc_id: int, user=Depends(get_current_user)):
         conn.close()
         raise HTTPException(404, "Document not found.")
 
-    # Already generated once: return the stored summary, no model call.
+    # Already prepared: return it at once.
     if row["summary"]:
         cur.close()
         conn.close()
         cached = row["summary"]
 
         def cached_stream():
-            yield f"data: {json.dumps({'text': cached, 'done': True})}\n\n"
+            yield sse({"text": cached, "done": True})
 
         return StreamingResponse(cached_stream(), media_type="text/event-stream", headers=SSE_HEADERS)
 
-    cur.execute(
-        "SELECT text FROM chunks WHERE doc_id = %s ORDER BY chunk_index ASC LIMIT 3",
-        (doc_id,),
-    )
-    rows = cur.fetchall()
+    cur.execute("SELECT 1 AS present FROM chunks WHERE doc_id = %s LIMIT 1", (doc_id,))
+    has_chunks = cur.fetchone() is not None
     cur.close()
     conn.close()
 
-    chunks = [r["text"] for r in rows]
-    if not chunks:
+    if not has_chunks:
         def empty():
-            yield f"data: {json.dumps({'text': 'No content found.', 'done': True})}\n\n"
+            yield sse({"text": "No content found.", "done": True})
         return StreamingResponse(empty(), media_type="text/event-stream")
-    chunks = [" ".join(" ".join(chunks).split()[:SUMMARY_WORDS])]
 
-    def stream():
-        parts = []
-        try:
-            with BACKGROUND_LOCK:
-                for token in generate_summary_stream(chunks):
-                    parts.append(token)
-                    yield f"data: {json.dumps({'text': token, 'done': False})}\n\n"
-        except Exception:
-            # e.g. rate limit or model error: tell the client instead of hanging
-            logger.exception("Summary generation failed for document %s", doc_id)
-            yield f"data: {json.dumps({'text': '', 'done': True, 'error': True})}\n\n"
-            return
+    # Not ready yet. The background worker (app/prepare.py) is the only code that calls the
+    # model: ask it to do this document next, then wait for its result. Generating here as well
+    # made two producers fight over one token budget and produced "retry" boxes.
+    prioritize(doc_id)
 
-        summary = "".join(parts).strip()
-        if not summary:
-            logger.warning("Summary generation returned no text for document %s", doc_id)
-            yield f"data: {json.dumps({'text': '', 'done': True, 'error': True})}\n\n"
-            return
+    def wait_for_worker():
+        for _ in range(PREP_WAIT_SECONDS):
+            exists, summary = read_prepared(doc_id, "summary")
+            if not exists:  # deleted while waiting
+                yield sse({"text": "", "done": True, "error": True})
+                return
+            if summary:
+                yield sse({"text": summary, "done": True})
+                return
+            yield ": waiting\n\n"  # SSE comment: keeps the connection alive, clients ignore it
+            time.sleep(1)
+        logger.warning("Gave up waiting for the summary of document %s", doc_id)
+        yield sse({"text": "", "done": True, "error": True})
 
-        # Store only complete summaries. If the client disconnects mid-stream
-        # (for example, the user switched documents), this line is never reached.
-        try:
-            save_conn = get_db_connection()
-            save_cur = save_conn.cursor()
-            save_cur.execute(
-                "UPDATE documents SET summary = %s WHERE id = %s",
-                (summary, doc_id),
-            )
-            save_conn.commit()
-            save_cur.close()
-            save_conn.close()
-        except Exception:
-            pass  # caching is best-effort; the summary was still delivered
+    return StreamingResponse(wait_for_worker(), media_type="text/event-stream", headers=SSE_HEADERS)
 
-        yield f"data: {json.dumps({'text': '', 'done': True})}\n\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream", headers=SSE_HEADERS)
 
 @router.get("/search")
 def search_documents(q: str, user=Depends(get_current_user)):

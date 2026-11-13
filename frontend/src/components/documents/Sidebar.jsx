@@ -419,7 +419,13 @@ export default function Sidebar({ isOpen, onClose }) {
     if (!confirm(`Delete "${doc.filename}"?`)) return
     await deleteDocument(doc.id)
     delete suggestionsCache.current[doc.id]
-    setSuggestions([])
+    // Only clear the panel if it was showing the deleted document's questions. Deleting some
+    // other document must leave the selected document's suggestions alone.
+    if (suggestionsFor.current === doc.id) {
+      suggestionsFor.current = null
+      setSuggestions([])
+      setLoadingSuggestions(false)
+    }
     toast.success('Document deleted')
   }
 

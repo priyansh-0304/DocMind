@@ -2,6 +2,8 @@
 
 > Upload any PDF. Ask anything. Get answers grounded in your document — not hallucinations.
 
+https://github.com/user-attachments/assets/26b09bd6-db53-403b-9802-14806bbeaba2
+
 ![DocMind App Screenshot](./screenshots/app.png)
 
 ## What it does
@@ -21,8 +23,8 @@ DocMind is a full-stack RAG (Retrieval-Augmented Generation) application that le
 - **Measured retrieval quality** — an evaluation harness benchmarks chunking and embedding choices with Hit@k and MRR (see [Retrieval Evaluation](#retrieval-evaluation))
 
 ### Productivity
-- **Smart suggestions** — AI-generated questions, generated once per document and stored, so switching documents is instant
-- **Document summarization** — TL;DR generated once per document, stored, and shown instantly above the chat afterwards
+- **Smart suggestions** — AI-generated questions, prepared in the background after upload and stored, so switching documents is instant
+- **Document summarization** — TL;DR prepared in the background after upload, stored, and shown instantly above the chat
 - **Chat search** — Ctrl+F style search through current chat history
 - **Pin messages** — star/bookmark key AI answers to reference later
 - **Export chat as PDF** — download full Q&A session as a formatted report
@@ -165,7 +167,9 @@ python -m reindex_chunks
 
 A fresh database needs neither step.
 
-**Rate limits shape the design.** Groq's free plan allows 8,000 tokens per minute for each model, and the first version of the summary request alone used 4,000 to 5,000 of them by sending six full chunks. When the budget ran short, the SDK silently waited out the retry-after (one stall measured 53 seconds). Now a summary reads only the opening ~1,200 words and the suggestions read only the first chunk, about 3K tokens together. Those two jobs run one at a time on a different model from chat answers, so they never compete with an answer, and they fail fast so the UI can offer a retry. Both results are stored per document, so the cost is paid once, and `python -m rag_eval.warm_cache` pre-generates them for every document at a pace the limit allows.
+**Rate limits shape the design.** Groq's free plan allows 8,000 tokens per minute for each model, and the first version of the summary request alone used 4,000 to 5,000 of them by sending six full chunks. When the budget ran short, the SDK silently waited out the retry-after (one stall measured 53 seconds). Now a summary reads only the opening ~1,200 words and the suggestions read only the first chunk, about 3K tokens together, and they run on a different model from chat answers so they never compete with an answer.
+
+**Background preparation.** After an upload, a single worker thread (`app/prepare.py`) writes each document's summary and suggestions one document at a time, pausing 25 seconds between documents, so the limit is respected by construction. It works from the database, so it catches up after a restart; it waits out any rate limit it still meets (the lock is never held while waiting); it backs off on repeated failures so one bad document cannot block the rest; and it stops after five failed attempts per run. The worker is the only code that calls the model for these two jobs. An earlier version also let the routes generate on demand, and the two producers fought over one token budget and produced a storm of failed requests. Now, opening a document the worker has not reached yet moves it to the front of the queue and the request waits for the stored result. `rag_eval/warm_cache.py` runs the same logic from the command line when the server is stopped.
 
 **Changing the embedding model requires re-embedding.** Vectors from different models live in different spaces, even at the same dimension. After changing `MODEL_NAME`, run `python -m reindex_chunks` from `backend/`. It re-embeds every stored chunk from its saved text, so the original PDFs are not needed.
 
@@ -258,6 +262,7 @@ docmind/
 │   └── app/
 │       ├── main.py                  # FastAPI app, CORS, startup
 │       ├── config.py                # Settings from .env
+│       ├── prepare.py               # Background worker: summaries and suggestions after upload
 │       ├── db.py                    # DB connection + table init (users, documents,
 │       │                            #   chunks, chat_messages, tags, document_tags)
 │       │                            # btree index on chunks.doc_id (no ANN index)
